@@ -1,0 +1,30 @@
+<html xmlns="http://www.w3.org/1999/html">
+    <head>
+        <title><%block name="title"/></title>
+        <script src="https://unpkg.com/htmx.org@1.9.9"></script>
+        <script src="https://unpkg.com/htmx.org/dist/ext/client-side-templates.js"></script>
+        <script src="https://unpkg.com/mustache@latest"></script>
+        <link rel='icon' type='image/x-icon' href='static-files/favicon.ico'>
+        <link rel="stylesheet" href="static-files/site.css">
+
+    </head>
+    <body>
+        <main>
+            <header>
+                <%block name="header">
+                    <h2>
+                        <%block name="intro"/>
+                    </h2>
+                </%block>
+            </header>
+            <article>
+                ${self.body()}
+            </article>
+            <footer>
+                <%block name="footer">
+                    this is the footer
+                </%block>
+            </footer>
+        </main>
+    </body>
+</html>

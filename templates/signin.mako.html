@@ -1,0 +1,23 @@
+<%inherit file="base.mako.html"/>
+
+<%block name="title">
+    this is the title
+</%block>
+
+<%block name="header">
+    this is some header content
+    ${parent.header()}
+</%block>
+
+
+<%block name="intro">
+    intro
+</%block>
+
+<form action="/sign-out" method="post">
+    <button>Sign Out</button>
+</form>
+
+<form action="/sign-in" method="get">
+    <button>Sign In</button>
+</form>

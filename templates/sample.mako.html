@@ -1,0 +1,73 @@
+<%inherit file="base.mako.html"/>
+
+<%block name="title">
+    this is the title
+</%block>
+
+<%block name="header">
+    this is some header content
+    ${parent.header()}
+</%block>
+
+
+<%block name="intro">
+    intro
+</%block>
+
+this is the body content.
+<!--
+<dialog id="DialogExample">
+    <p>
+        Here is some text for example.
+    </p>
+    <button id="hide">Close dialog text</button>
+</dialog>
+<button id="show">Show dialog text</button>
+
+<div id="publishers-list">
+    <button>Add Publisher</button>
+    <button>Edit Publisher</button>
+    <button>Delete Publisher</button>
+</div>
+
+
+<div id="books-list">
+    <button>Add Book</button>
+    <button>Edit Book</button>
+    <button>Delete Book</button>
+</div>
+
+
+<script type="text/JavaScript">
+    var dialog = document.getElementById('DialogExample');
+    document.getElementById('show').onclick = function() {
+        dialog.show();
+    };
+    document.getElementById('hide').onclick = function() {
+        dialog.close();
+    };
+</script>
+-->
+
+<div hx-ext="client-side-templates">
+    <button hx-get="http://localhost:8000/publisher/all"
+            hx-swap="innerHTML"
+            hx-target="#content-publisher"
+            mustache-array-template="publisher">
+      Click Me
+    </button>
+
+    <!-- content-publisher is replaced with data -->
+    <p id="content-publisher">Start</p>
+
+    <template id="publisher">
+        <!-- format of each row -->
+          <ul>
+            {{#data}} <!-- root json element, added by htmx -->
+              {{#publishers}} <!-- root json element from the data call -->
+                <li>{{name}}</li> <!-- data to display -->
+              {{/publishers}}
+            {{/data}}
+          </ul>
+    </template>
+</div>
