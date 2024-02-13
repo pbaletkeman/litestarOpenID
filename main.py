@@ -11,6 +11,7 @@ from os import environ
 from typing import Any, Optional
 
 from litestar.handlers import HTTPRouteHandler
+from litestar.params import Parameter
 from litestar.response import Redirect
 
 from litestar.contrib.mako import MakoTemplateEngine
@@ -25,6 +26,7 @@ from litestar.connection import ASGIConnection
 from litestar.openapi.config import OpenAPIConfig
 from litestar.security.jwt import OAuth2Login, OAuth2PasswordBearerAuth, Token
 from litestar.middleware.session.client_side import CookieBackendConfig
+from litestar.config.cors import CORSConfig
 
 from datetime import datetime
 
@@ -32,6 +34,8 @@ session_config = CookieBackendConfig(secret=os.urandom(16))
 
 # Simulate user database
 USERS_DB = {}
+
+cors_config = CORSConfig(allow_origins=["https://dev-73804109.okta.com"])
 
 
 def write_to_file(lines: str) -> None:
@@ -182,10 +186,9 @@ async def login_handler(request: "Request[Any, Any, Any]", data: "User") -> "Res
 @HTTPRouteHandler(path="/sign-in", http_method=[HttpMethod.GET, HttpMethod.POST])
 async def sign_in(request: Request) -> Any:
     # store app state and code verifier in session
-    write_to_file('sign in')
     request.set_session({"app_state": secrets.token_urlsafe(64), "code_verifier": secrets.token_urlsafe(64)})
 
-    write_to_file('app_state: ' + request.session.get('app_state')
+    write_to_file('sign in\napp_state: ' + request.session.get('app_state')
                   + '\ncode_verifier: ' + request.session.get('code_verifier'))
 
     # calculate code challenge
@@ -195,7 +198,7 @@ async def sign_in(request: Request) -> Any:
 
     # get request params
     query_params = {'client_id': config['client_id'],
-                    'redirect_uri': 'raw_redirect_uri',
+                    'redirect_uri': config['redirect_uri'],  # 'raw_redirect_uri',
                     'scope': 'openid email profile',
                     'state': request.session['app_state'],
                     'code_challenge': code_challenge,
@@ -206,7 +209,7 @@ async def sign_in(request: Request) -> Any:
     # build request_uri
     encoded_params = (urllib.parse.quote(dict_to_query_string(query_params))
                       .replace('raw_redirect_uri', config['redirect_uri']))
-
+    encoded_params = str(encoded_params).replace('callback%26', 'callback%3F')
     write_to_file('encoded param ' + encoded_params)
     request_uri = "{base_url}?{query_params}".format(
         base_url=config["auth_uri"],
@@ -235,24 +238,35 @@ async def read_items() -> list[Item]:
 
 
 @get('/authorization-code/callback')
-async def callback(request: Request) -> Any:
+async def callback(request: Request,
+                   okta_scope: str = Parameter(query='scope', required=False),
+                   okta_state: str = Parameter(query='state', required=False),
+                   code_challenge: str = Parameter(query='code_challenge', required=False),
+                   code_challenge_method: str = Parameter(query='code_challenge_method', required=False),
+                   response_type: str = Parameter(query='response_type', required=False),
+                   response_mode: str = Parameter(query='response_mode', required=False)) -> Any:
+    write_to_file('callback')
     headers = {'Content-Type': 'application/x-www-form-urlencoded'}
     # print(str(request.query_params))
     code = request.query_params.get('code')
-    app_state = request.query_params.get('state')
+    app_state = request.query_params.get('okta_state')
 
     write_to_file('query_params: ' + str(request.query_params))
-
-    write_to_file('session app_state: ' + str(request.session.get('app_state')) + '\nquery app_state : ' + app_state)
-    write_to_file('code: ' + code + '\ncode_verifier: ' + request.session.get('code_verifier'))
-    write_to_file('base url: ' + request.base_url)
+    try:
+        write_to_file(
+            'session app_state: ' + str(request.session.get('app_state')) + '\nquery app_state : ' + app_state)
+        write_to_file('code: ' + code + '\ncode_verifier: ' + request.session.get('code_verifier'))
+    except Exception as ex:
+        print(ex)
+    write_to_file('base url: ' + str(request.base_url))
 
     if app_state != request.session.get('app_state'):
-
+        write_to_file('app state not matched')
         print('The app state does not match')
         return 'The app state does not match'
 
     if not code:
+        write_to_file('code issue')
         print('The code was not return or is not accessible')
         return 'The code was not return or is not accessible'
     query_params = {'grant_type': 'authorization_code',
@@ -307,7 +321,7 @@ class OpenAPIControllerExtra(OpenAPIController):
 # We initialize the app instance and pass the oauth2_auth 'on_app_init' handler to the constructor.
 # The hook handler will inject the JWT middleware and openapi configuration into the app.
 app = Litestar(
-    route_handlers=[login_handler, read_items, profile, index, sign_in, sign_out, callback, MockController],
+    route_handlers=[login_handler, read_items, profile, index, sign_in, sign_out, callback, MockController, something],
     # on_app_init=[oauth2_auth.on_app_init],
     openapi_config=OpenAPIConfig(
         title='My API', version='1.0.0',
@@ -325,5 +339,6 @@ app = Litestar(
         directory=Path('templates'),
         engine=MakoTemplateEngine,
     ),
-    middleware=[session_config.middleware]
+    middleware=[session_config.middleware],
+    cors_config=cors_config
 )
