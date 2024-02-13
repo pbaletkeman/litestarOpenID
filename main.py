@@ -37,6 +37,9 @@ USERS_DB = {}
 
 cors_config = CORSConfig(allow_origins=["https://dev-73804109.okta.com"])
 
+APP_STATE = 'Wy4-t7v1dKCFCq_n5hw-yJl9ofqkXduk8X_uLVh2nHrSjMfb3I58TdV68gMXCLQzyXN6aALPw3lj66gzIDbd8w'
+CODE_VERIFIER = 'uzhtxkdmC_k0HmSLkqL8qfamEQZD_IZ5UODPmAdZsLEMzyPy-lPkZyPUai5SKam8UiJWx_YewKh3zdCYsqhPow'
+
 
 def write_to_file(lines: str) -> None:
     f = open("log.txt", "a")
@@ -144,7 +147,9 @@ async def retrieve_user_handler(token: "Token", connection: "ASGIConnection[Any,
 
 def dict_to_query_string(val: dict[str, str]) -> str:
     write_to_file('dict to str\n' + str(val))
-    return str(val).replace("', '", '&').replace("': '", '=')[2:-2]
+    x = str(val).replace("', '", '&').replace("': '", '=')[2:-2]
+    x = x.replace("': URL('", '=').replace("'), '", '?')
+    return x
 
 
 oauth2_auth = OAuth2PasswordBearerAuth[User](
@@ -186,7 +191,8 @@ async def login_handler(request: "Request[Any, Any, Any]", data: "User") -> "Res
 @HTTPRouteHandler(path="/sign-in", http_method=[HttpMethod.GET, HttpMethod.POST])
 async def sign_in(request: Request) -> Any:
     # store app state and code verifier in session
-    request.set_session({"app_state": secrets.token_urlsafe(64), "code_verifier": secrets.token_urlsafe(64)})
+    # request.set_session({"app_state": secrets.token_urlsafe(64), "code_verifier": secrets.token_urlsafe(64)})
+    request.set_session({"app_state": APP_STATE, "code_verifier": CODE_VERIFIER})
 
     write_to_file('sign in\napp_state: ' + request.session.get('app_state')
                   + '\ncode_verifier: ' + request.session.get('code_verifier'))
@@ -198,7 +204,7 @@ async def sign_in(request: Request) -> Any:
 
     # get request params
     query_params = {'client_id': config['client_id'],
-                    'redirect_uri': config['redirect_uri'],  # 'raw_redirect_uri',
+                    'redirect_uri': 'raw_redirect_uri',
                     'scope': 'openid email profile',
                     'state': request.session['app_state'],
                     'code_challenge': code_challenge,
@@ -243,16 +249,18 @@ async def callback(request: Request,
                    okta_state: str = Parameter(query='state', required=False),
                    code_challenge: str = Parameter(query='code_challenge', required=False),
                    code_challenge_method: str = Parameter(query='code_challenge_method', required=False),
+                   code: str = Parameter(query='code', default='200', required=False),
                    response_type: str = Parameter(query='response_type', required=False),
                    response_mode: str = Parameter(query='response_mode', required=False)) -> Any:
     write_to_file('callback')
     headers = {'Content-Type': 'application/x-www-form-urlencoded'}
     # print(str(request.query_params))
-    code = request.query_params.get('code')
-    app_state = request.query_params.get('okta_state')
+    # code = request.query_params.get('code')
+    app_state = APP_STATE  # request.query_params.get('state')
 
     write_to_file('query_params: ' + str(request.query_params))
     try:
+        request.set_session({"app_state": APP_STATE, "code_verifier": CODE_VERIFIER})
         write_to_file(
             'session app_state: ' + str(request.session.get('app_state')) + '\nquery app_state : ' + app_state)
         write_to_file('code: ' + code + '\ncode_verifier: ' + request.session.get('code_verifier'))
@@ -274,8 +282,8 @@ async def callback(request: Request,
                     'redirect_uri': request.base_url,
                     'code_verifier': request.session.get('code_verifier')
                     }
-    query_params = urllib.parse.quote(dict_to_query_string(query_params))
-    write_to_file('query params :' + query_params)
+    # query_params = urllib.parse.quote(dict_to_query_string(query_params))
+    write_to_file('query params :' + dict_to_query_string(query_params))
     write_to_file('client_id : ' + config.get('client_id') + ' secret:' + config.get('client_secret'))
     exchange = requests.post(
         config.get('token_uri'),
@@ -283,6 +291,9 @@ async def callback(request: Request,
         data=query_params,
         auth=(config.get('client_id'), config.get('client_secret'))
     ).json()
+    print('sssssssssssssssssssss')
+    print(query_params)
+    print(exchange)
     write_to_file('token type: ' + exchange.get('token_type') + '\naccess token :' +
                   exchange.get('access_token') + '\nid_token: ' + exchange.get('id_token'))
     write_to_file('exchange: ' + exchange)
@@ -321,7 +332,7 @@ class OpenAPIControllerExtra(OpenAPIController):
 # We initialize the app instance and pass the oauth2_auth 'on_app_init' handler to the constructor.
 # The hook handler will inject the JWT middleware and openapi configuration into the app.
 app = Litestar(
-    route_handlers=[login_handler, read_items, profile, index, sign_in, sign_out, callback, MockController, something],
+    route_handlers=[login_handler, read_items, profile, index, sign_in, sign_out, callback, MockController],
     # on_app_init=[oauth2_auth.on_app_init],
     openapi_config=OpenAPIConfig(
         title='My API', version='1.0.0',
