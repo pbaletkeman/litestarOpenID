@@ -1,3 +1,4 @@
+import os
 import base64
 import hashlib
 import urllib.parse
@@ -8,6 +9,8 @@ import secrets
 
 from os import environ
 from typing import Any, Optional
+
+from litestar.handlers import HTTPRouteHandler
 from litestar.response import Redirect
 
 from litestar.contrib.mako import MakoTemplateEngine
@@ -17,13 +20,26 @@ from litestar.static_files import StaticFilesConfig
 from litestar.template import TemplateConfig
 from pydantic import BaseModel, EmailStr
 
-from litestar import Litestar, Request, Response, get, post, Controller
+from litestar import Litestar, Request, Response, get, post, Controller, HttpMethod
 from litestar.connection import ASGIConnection
 from litestar.openapi.config import OpenAPIConfig
 from litestar.security.jwt import OAuth2Login, OAuth2PasswordBearerAuth, Token
+from litestar.middleware.session.client_side import CookieBackendConfig
+
+from datetime import datetime
+
+session_config = CookieBackendConfig(secret=os.urandom(16))
 
 # Simulate user database
 USERS_DB = {}
+
+
+def write_to_file(lines: str) -> None:
+    f = open("log.txt", "a")
+    f.write(str(datetime.now()) + '\n')
+    f.write(lines + '\n')
+    f.write('*' * 20 + '\n')
+    f.close()
 
 
 # Let's assume we have a User model that is a pydantic model.
@@ -63,9 +79,9 @@ class Item(BaseModel):
 
 MOCK_DB: dict[str, User] = {}
 
-your_okta_domain = 'localhost:8000'
-client_id = 'pete-client-id'
-client_secret = 'pete-client-secret'
+your_okta_domain = 'dev-73804109.okta.com'
+client_id = '0oaf3qsm0fCKukhMD5d7'
+client_secret = 'WQCRZieBEJIFbvpUhsi4tmgL1_X3VC3EW15-BQSb5c9pp8Mx7lFf65esYTblEhtO'
 redirect_uri = 'http://localhost:8000/authorization-code/callback'
 
 config: dict[str, str] = {
@@ -101,10 +117,12 @@ class MockController(Controller):
 
 
 def logout_user():
+    write_to_file('log out user')
     print('log out user')
 
 
 def login_user(user: User) -> Any:
+    write_to_file('create user')
     print('create user')
     print(user)
 
@@ -121,6 +139,7 @@ async def retrieve_user_handler(token: "Token", connection: "ASGIConnection[Any,
 
 
 def dict_to_query_string(val: dict[str, str]) -> str:
+    write_to_file('dict to str\n' + str(val))
     return str(val).replace("', '", '&').replace("': '", '=')[2:-2]
 
 
@@ -137,17 +156,20 @@ oauth2_auth = OAuth2PasswordBearerAuth[User](
 
 @get(path='/profile')
 async def profile(name: Optional[str]) -> Template:
+    write_to_file('profile')
     return Template(template_name='profile.mako.html', context={"name": name})
 
 
 @get(path='/')
 async def index(name: Optional[str]) -> Template:
+    write_to_file('home page')
     return Template(template_name='signin.mako.html', context={"name": name})
 
 
 # Given an instance of 'OAuth2PasswordBearerAuth' we can create a login handler function:
 @post("/login")
 async def login_handler(request: "Request[Any, Any, Any]", data: "User") -> "Response[OAuth2Login]":
+    write_to_file('login')
     MOCK_DB[str(data.id)] = data
     # if we do not define a response body, the login process will return a standard OAuth2 login response.
     # Note the `Response[OAuth2Login]` return type.
@@ -157,10 +179,14 @@ async def login_handler(request: "Request[Any, Any, Any]", data: "User") -> "Res
     return oauth2_auth.login(identifier=str(data.id))
 
 
-@post("/sign-in")
+@HTTPRouteHandler(path="/sign-in", http_method=[HttpMethod.GET, HttpMethod.POST])
 async def sign_in(request: Request) -> Any:
     # store app state and code verifier in session
+    write_to_file('sign in')
     request.set_session({"app_state": secrets.token_urlsafe(64), "code_verifier": secrets.token_urlsafe(64)})
+
+    write_to_file('app_state: ' + request.session.get('app_state')
+                  + '\ncode_verifier: ' + request.session.get('code_verifier'))
 
     # calculate code challenge
     hashed = hashlib.sha256(request.session['code_verifier'].encode('ascii')).digest()
@@ -169,7 +195,7 @@ async def sign_in(request: Request) -> Any:
 
     # get request params
     query_params = {'client_id': config['client_id'],
-                    'redirect_uri': config['redirect_uri'],
+                    'redirect_uri': 'raw_redirect_uri',
                     'scope': 'openid email profile',
                     'state': request.session['app_state'],
                     'code_challenge': code_challenge,
@@ -178,17 +204,24 @@ async def sign_in(request: Request) -> Any:
                     'response_mode': 'query'}
 
     # build request_uri
+    encoded_params = (urllib.parse.quote(dict_to_query_string(query_params))
+                      .replace('raw_redirect_uri', config['redirect_uri']))
+
+    write_to_file('encoded param ' + encoded_params)
     request_uri = "{base_url}?{query_params}".format(
         base_url=config["auth_uri"],
-        query_params=urllib.parse.quote(dict_to_query_string(query_params))
+        query_params=encoded_params
     )
-
+    write_to_file('request_url: ' + request_uri)
     return Redirect(request_uri)
+    # print(request.session)
+    # return 'pete'
 
 
 # We also have some other routes, for example:
 @get("/sign-out")
 async def sign_out() -> Redirect:
+    write_to_file('sign-out')
     logout_user()
     return Redirect('/')
 
@@ -207,9 +240,20 @@ async def callback(request: Request) -> Any:
     # print(str(request.query_params))
     code = request.query_params.get('code')
     app_state = request.query_params.get('state')
+
+    write_to_file('query_params: ' + str(request.query_params))
+
+    write_to_file('session app_state: ' + str(request.session.get('app_state')) + '\nquery app_state : ' + app_state)
+    write_to_file('code: ' + code + '\ncode_verifier: ' + request.session.get('code_verifier'))
+    write_to_file('base url: ' + request.base_url)
+
     if app_state != request.session.get('app_state'):
+
+        print('The app state does not match')
         return 'The app state does not match'
+
     if not code:
+        print('The code was not return or is not accessible')
         return 'The code was not return or is not accessible'
     query_params = {'grant_type': 'authorization_code',
                     'code': code,
@@ -217,13 +261,17 @@ async def callback(request: Request) -> Any:
                     'code_verifier': request.session.get('code_verifier')
                     }
     query_params = urllib.parse.quote(dict_to_query_string(query_params))
+    write_to_file('query params :' + query_params)
+    write_to_file('client_id : ' + config.get('client_id') + ' secret:' + config.get('client_secret'))
     exchange = requests.post(
         config.get('token_uri'),
         headers=headers,
         data=query_params,
         auth=(config.get('client_id'), config.get('client_secret'))
     ).json()
-
+    write_to_file('token type: ' + exchange.get('token_type') + '\naccess token :' +
+                  exchange.get('access_token') + '\nid_token: ' + exchange.get('id_token'))
+    write_to_file('exchange: ' + exchange)
     # get token and validate
     if not exchange.get('token_type'):
         return 'unsupported token type, should be "Bearer"'
@@ -231,10 +279,12 @@ async def callback(request: Request) -> Any:
     id_token = exchange.get('id_token')
 
     # authorization flow successful, get userinfo and sign in user
+    write_to_file('userinfo_uri: ' + config.get('userinfo_uri') + '\naccess_token: ' + access_token)
     user_response = requests.get(config.get('userinfo_uri'),
                                  headers={'Authorization': f'Bearer {access_token}'}
                                  ).json()
 
+    write_to_file(str(user_response))
     unique_id = user_response.get('sub')
     user_email = user_response.get('email')
     user_name = user_response.get('given_name')
@@ -275,4 +325,5 @@ app = Litestar(
         directory=Path('templates'),
         engine=MakoTemplateEngine,
     ),
+    middleware=[session_config.middleware]
 )
