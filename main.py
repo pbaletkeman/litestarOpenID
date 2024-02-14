@@ -104,26 +104,6 @@ config: dict[str, str] = {
 }
 
 
-class MockController(Controller):
-    path = '/oauth2/default'
-
-    @get('/v1/authorize')
-    async def method1(self) -> str:
-        return 'test - /v1/authorize'
-
-    @get('/v1/token')
-    async def method2(self) -> str:
-        return 'test - /v1/token'
-
-    @get('/v1/userinfo')
-    async def method3(self) -> str:
-        return 'test - /v1/userinfo'
-
-    @get()
-    async def method4(self) -> str:
-        return 'test issue'
-
-
 def logout_user():
     print('log out user')
 
