@@ -1,8 +1,7 @@
-from uuid import UUID
+from datetime import datetime
+from dotenv import load_dotenv
 
 import os
-import base64
-import hashlib
 from pathlib import Path
 
 import requests
@@ -19,8 +18,6 @@ from litestar.openapi import OpenAPIController
 from litestar.response import Template
 from litestar.static_files import StaticFilesConfig
 from litestar.template import TemplateConfig
-from pydantic import BaseModel, EmailStr
-
 from litestar import Litestar, Request, Response, get, post, Controller, HttpMethod
 from litestar.connection import ASGIConnection
 from litestar.openapi.config import OpenAPIConfig
@@ -28,34 +25,30 @@ from litestar.security.jwt import OAuth2Login, OAuth2PasswordBearerAuth, Token
 from litestar.middleware.session.client_side import CookieBackendConfig
 from litestar.config.cors import CORSConfig
 
-from datetime import datetime
-
-from dotenv import load_dotenv
+from pydantic import BaseModel, EmailStr
 
 load_dotenv()
 session_config = CookieBackendConfig(secret=os.urandom(16))
-
-
-
 
 cors_config = CORSConfig(allow_origins=["*"])
 
 APP_STATE = str(secrets.token_hex(64))
 NONCE = str(secrets.token_hex(64))
-CODE_VERIFIER = os.getenv('CODE_VERIFIER')
 
 
 def write_to_file(lines: str) -> None:
+    """
+    quick dirty way to write to a log file
+    helpful when a third party makes an endpoint request
+
+    :param lines: data to write to the log file
+    :return:
+    """
     f = open("log.txt", "a")
     f.write(str(datetime.now()) + '\n')
     f.write(lines + '\n')
     f.write('*' * 20 + '\n')
     f.close()
-
-
-# def create_app_state() -> None:
-#     global APP_STATE
-#     APP_STATE = str(secrets.token_hex(64))
 
 
 # Let's assume we have a User model that is a pydantic model.
@@ -85,12 +78,20 @@ class Item(BaseModel):
     name: str
 
 
+@get('/read-items')
+async def read_items() -> list[Item]:
+    items: list[Item] = []
+    for i in range(5):
+        items.append(Item(id=i, name='item ' + str(i)))
+    return items
+
+
 MOCK_DB: dict[str, User] = {}
 
 your_okta_domain = os.getenv('your_okta_domain')
 client_id = os.getenv('client_id')
 client_secret = os.getenv('client_secret')
-redirect_uri = 'http://localhost:8000/authorization-code/callback'
+redirect_uri = os.getenv('redirect_uri')
 
 config: dict[str, str] = {
     'SECRET_KEY': secrets.token_hex(64),
@@ -135,9 +136,10 @@ oauth2_auth = OAuth2PasswordBearerAuth[User](
 )
 
 
-@get(path='/profile')
-async def profile(name: Optional[str]) -> Template:
-    return Template(template_name='profile.mako.html', context={"name": name})
+@get(path='/profile/{user_id:str}')
+async def profile(user_id: str) -> Template:
+    print(USERS_DB[user_id])
+    return Template(template_name='profile.mako.html', context={"name": USERS_DB[user_id]})
 
 
 @get(path='/')
@@ -184,19 +186,11 @@ async def sign_out() -> Redirect:
     return Redirect('/')
 
 
-@get('/read-items')
-async def read_items() -> list[Item]:
-    items: list[Item] = []
-    for i in range(5):
-        items.append(Item(id=i, name='item ' + str(i)))
-    return items
-
-
 @get('/authorization-code/callback')
 async def callback(request: Request) -> Any:
-    okta_state: str = request.query_params.get('state')
-    code: str = request.query_params.get('code')
     headers = {'Content-Type': 'application/x-www-form-urlencoded'}
+
+    code: str = request.query_params.get('code')
     app_state = request.query_params.get('state')
 
     if app_state != APP_STATE:
@@ -218,6 +212,7 @@ async def callback(request: Request) -> Any:
         data=query_params,
         auth=(config.get('client_id'), config.get('client_secret'))
     ).json()
+    print('exchange')
     print(exchange)
     # get token and validate
     if not exchange.get('token_type'):
@@ -229,7 +224,9 @@ async def callback(request: Request) -> Any:
     user_response = requests.get(config.get('userinfo_uri'),
                                  headers={'Authorization': f'Bearer {access_token}'}
                                  ).json()
-
+    print('*' * 20)
+    print('user_response')
+    print(user_response)
     unique_id = user_response.get('sub')
     user_email = user_response.get('email')
     user_name = user_response.get('given_name')
@@ -244,7 +241,7 @@ async def callback(request: Request) -> Any:
 
     login_user(user)
 
-    return Redirect('/profile')
+    return Redirect('/profile/' + unique_id)
 
 
 # We create our OpenAPIConfig as usual - the JWT security scheme will be injected into it.
@@ -255,7 +252,7 @@ class OpenAPIControllerExtra(OpenAPIController):
 # We initialize the app instance and pass the oauth2_auth 'on_app_init' handler to the constructor.
 # The hook handler will inject the JWT middleware and openapi configuration into the app.
 app = Litestar(
-    route_handlers=[login_handler, read_items, profile, index, sign_in, sign_out, callback, MockController],
+    route_handlers=[login_handler, read_items, profile, index, sign_in, sign_out, callback],
     # on_app_init=[oauth2_auth.on_app_init],
     openapi_config=OpenAPIConfig(
         title='My API', version='1.0.0',
