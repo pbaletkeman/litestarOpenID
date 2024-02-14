@@ -35,7 +35,7 @@ session_config = CookieBackendConfig(secret=os.urandom(16))
 # Simulate user database
 USERS_DB = {}
 
-cors_config = CORSConfig(allow_origins=["https://dev-73804109.okta.com"])
+cors_config = CORSConfig(allow_origins=["*"])
 
 APP_STATE = 'Wy4-t7v1dKCFCq_n5hw-yJl9ofqkXduk8X_uLVh2nHrSjMfb3I58TdV68gMXCLQzyXN6aALPw3lj66gzIDbd8w'
 CODE_VERIFIER = 'uzhtxkdmC_k0HmSLkqL8qfamEQZD_IZ5UODPmAdZsLEMzyPy-lPkZyPUai5SKam8UiJWx_YewKh3zdCYsqhPow'
@@ -191,8 +191,8 @@ async def login_handler(request: "Request[Any, Any, Any]", data: "User") -> "Res
 @HTTPRouteHandler(path="/sign-in", http_method=[HttpMethod.GET, HttpMethod.POST])
 async def sign_in(request: Request) -> Any:
     # store app state and code verifier in session
-    # request.set_session({"app_state": secrets.token_urlsafe(64), "code_verifier": secrets.token_urlsafe(64)})
-    request.set_session({"app_state": APP_STATE, "code_verifier": CODE_VERIFIER})
+    request.set_session({"app_state": secrets.token_urlsafe(64), "code_verifier": secrets.token_urlsafe(64)})
+    # request.set_session({"app_state": APP_STATE, "code_verifier": CODE_VERIFIER})
 
     write_to_file('sign in\napp_state: ' + request.session.get('app_state')
                   + '\ncode_verifier: ' + request.session.get('code_verifier'))
@@ -228,7 +228,7 @@ async def sign_in(request: Request) -> Any:
 
 
 # We also have some other routes, for example:
-@get("/sign-out")
+@HTTPRouteHandler(path="/sign-out", http_method=[HttpMethod.GET, HttpMethod.POST])
 async def sign_out() -> Redirect:
     write_to_file('sign-out')
     logout_user()
@@ -244,23 +244,30 @@ async def read_items() -> list[Item]:
 
 
 @get('/authorization-code/callback')
-async def callback(request: Request,
-                   okta_scope: str = Parameter(query='scope', required=False),
-                   okta_state: str = Parameter(query='state', required=False),
-                   code_challenge: str = Parameter(query='code_challenge', required=False),
-                   code_challenge_method: str = Parameter(query='code_challenge_method', required=False),
-                   code: str = Parameter(query='code', default='200', required=False),
-                   response_type: str = Parameter(query='response_type', required=False),
-                   response_mode: str = Parameter(query='response_mode', required=False)) -> Any:
+async def callback(request: Request
+                   # okta_scope: str = Parameter(query='scope', required=False),
+                   # okta_state: str = Parameter(query='state', required=False),
+                   # code_challenge: str = Parameter(query='code_challenge', required=False),
+                   # code_challenge_method: str = Parameter(query='code_challenge_method', required=False),
+                   # code: str = Parameter(query='code', default='200', required=False),
+                   # response_type: str = Parameter(query='response_type', required=False),
+                   # response_mode: str = Parameter(query='response_mode', required=False)
+                   ) -> Any:
+    okta_scope: str = request.query_params.get('scope')
+    okta_state: str = request.query_params.get('state')
+    code_challenge: str = request.query_params.get('code_challenge')
+    code_challenge_method: str = request.query_params.get('code_challenge_method')
+    code: str = request.query_params.get('code')
+    response_type: str = request.query_params.get('response_type')
+    response_mode: str = request.query_params.get('response_mode')
     write_to_file('callback')
     headers = {'Content-Type': 'application/x-www-form-urlencoded'}
     # print(str(request.query_params))
-    # code = request.query_params.get('code')
-    app_state = APP_STATE  # request.query_params.get('state')
+    app_state = request.query_params.get('state')
 
     write_to_file('query_params: ' + str(request.query_params))
     try:
-        request.set_session({"app_state": APP_STATE, "code_verifier": CODE_VERIFIER})
+        # request.set_session({"app_state": APP_STATE, "code_verifier": CODE_VERIFIER})
         write_to_file(
             'session app_state: ' + str(request.session.get('app_state')) + '\nquery app_state : ' + app_state)
         write_to_file('code: ' + code + '\ncode_verifier: ' + request.session.get('code_verifier'))
@@ -291,9 +298,11 @@ async def callback(request: Request,
         data=query_params,
         auth=(config.get('client_id'), config.get('client_secret'))
     ).json()
-    print('sssssssssssssssssssss')
+    print('query params')
     print(query_params)
+    print('exchange')
     print(exchange)
+    print('d' * 10)
     write_to_file('token type: ' + exchange.get('token_type') + '\naccess token :' +
                   exchange.get('access_token') + '\nid_token: ' + exchange.get('id_token'))
     write_to_file('exchange: ' + exchange)
