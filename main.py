@@ -139,7 +139,7 @@ oauth2_auth = OAuth2PasswordBearerAuth[User](
 @get(path='/profile/{user_id:str}')
 async def profile(user_id: str) -> Template:
     print(USERS_DB[user_id])
-    return Template(template_name='profile.mako.html', context={"name": USERS_DB[user_id]})
+    return Template(template_name='profile.mako.html', context={"user": USERS_DB[user_id]})
 
 
 @get(path='/')
