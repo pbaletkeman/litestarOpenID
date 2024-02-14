@@ -10,20 +10,21 @@ import secrets
 from os import environ
 from typing import Any, Optional
 
+from litestar import Litestar, Request, Response, get, post, Controller, HttpMethod
 from litestar.handlers import HTTPRouteHandler
-from litestar.response import Redirect
-
+from litestar.config.cors import CORSConfig
+from litestar.connection import ASGIConnection
 from litestar.contrib.mako import MakoTemplateEngine
-from litestar.openapi import OpenAPIController
-from litestar.response import Template
+from litestar.middleware.session.client_side import CookieBackendConfig
+from litestar.response import Template, Redirect
 from litestar.static_files import StaticFilesConfig
 from litestar.template import TemplateConfig
-from litestar import Litestar, Request, Response, get, post, Controller, HttpMethod
-from litestar.connection import ASGIConnection
+from litestar.openapi import OpenAPIController
 from litestar.openapi.config import OpenAPIConfig
 from litestar.security.jwt import OAuth2Login, OAuth2PasswordBearerAuth, Token
-from litestar.middleware.session.client_side import CookieBackendConfig
-from litestar.config.cors import CORSConfig
+
+from litestar.status_codes import HTTP_302_FOUND
+
 
 from pydantic import BaseModel, EmailStr
 
@@ -165,8 +166,8 @@ class SSO(Controller):
         # e.g. response.set_cookie(...)
         return oauth2_auth.login(identifier=str(data.id))
 
-    @HTTPRouteHandler(path="/sign-in", http_method=[HttpMethod.GET, HttpMethod.POST])
-    async def sign_in(self, request: Request) -> Any:
+    @HTTPRouteHandler(path="/sign-in", http_method=[HttpMethod.GET, HttpMethod.POST], status_code=HTTP_302_FOUND)
+    async def sign_in(self, request: Request) -> Redirect:
         # get request params
         query_params = {'client_id': config['client_id'],
                         'redirect_uri': config['redirect_uri'],
@@ -185,13 +186,13 @@ class SSO(Controller):
         return Redirect(request_uri)
 
     # We also have some other routes, for example:
-    @HTTPRouteHandler(path="/sign-out", http_method=[HttpMethod.GET, HttpMethod.POST])
+    @HTTPRouteHandler(path="/sign-out", http_method=[HttpMethod.GET, HttpMethod.POST], status_code=HTTP_302_FOUND)
     async def sign_out(self) -> Redirect:
         logout_user()
         return Redirect('/')
 
     @get('/authorization-code/callback')
-    async def callback(self, request: Request) -> Any:
+    async def callback(self, request: Request) -> str | Response[Any]:
         headers = {'Content-Type': 'application/x-www-form-urlencoded'}
 
         code: str = request.query_params.get('code')
