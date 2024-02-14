@@ -136,112 +136,108 @@ oauth2_auth = OAuth2PasswordBearerAuth[User](
 )
 
 
-@get(path='/profile/{user_id:str}')
-async def profile(user_id: str) -> Template:
-    print(USERS_DB[user_id])
-    return Template(template_name='profile.mako.html', context={"user": USERS_DB[user_id]})
+class SSO(Controller):
+    @get(path='/profile/{user_id:str}')
+    async def profile(self, user_id: str) -> Template:
+        print(USERS_DB[user_id])
+        return Template(template_name='profile.mako.html', context={"user": USERS_DB[user_id]})
 
+    @get(path='/')
+    async def index(self, name: Optional[str]) -> Template:
+        return Template(template_name='signin.mako.html', context={"name": name})
 
-@get(path='/')
-async def index(name: Optional[str]) -> Template:
-    return Template(template_name='signin.mako.html', context={"name": name})
+    # Given an instance of 'OAuth2PasswordBearerAuth' we can create a login handler function:
+    @post("/login")
+    async def login_handler(self, request: "Request[Any, Any, Any]", data: "User") -> "Response[OAuth2Login]":
+        MOCK_DB[str(data.id)] = data
+        # if we do not define a response body, the login process will return a standard OAuth2 login response.
+        # Note the `Response[OAuth2Login]` return type.
 
+        # you can do whatever you want to update the response instance here
+        # e.g. response.set_cookie(...)
+        return oauth2_auth.login(identifier=str(data.id))
 
-# Given an instance of 'OAuth2PasswordBearerAuth' we can create a login handler function:
-@post("/login")
-async def login_handler(request: "Request[Any, Any, Any]", data: "User") -> "Response[OAuth2Login]":
-    MOCK_DB[str(data.id)] = data
-    # if we do not define a response body, the login process will return a standard OAuth2 login response.
-    # Note the `Response[OAuth2Login]` return type.
+    @HTTPRouteHandler(path="/sign-in", http_method=[HttpMethod.GET, HttpMethod.POST])
+    async def sign_in(self, request: Request) -> Any:
+        # get request params
+        query_params = {'client_id': config['client_id'],
+                        'redirect_uri': config['redirect_uri'],
+                        'scope': 'openid email profile',
+                        'state': APP_STATE,
+                        'nonce': NONCE,
+                        'response_type': 'code',
+                        'response_mode': 'query'}
 
-    # you can do whatever you want to update the response instance here
-    # e.g. response.set_cookie(...)
-    return oauth2_auth.login(identifier=str(data.id))
+        # build request_uri
+        encoded_params = (requests.compat.urlencode(query_params))
+        request_uri = "{base_url}?{query_params}".format(
+            base_url=config["auth_uri"],
+            query_params=encoded_params
+        )
+        return Redirect(request_uri)
 
+    # We also have some other routes, for example:
+    @HTTPRouteHandler(path="/sign-out", http_method=[HttpMethod.GET, HttpMethod.POST])
+    async def sign_out(self) -> Redirect:
+        logout_user()
+        return Redirect('/')
 
-@HTTPRouteHandler(path="/sign-in", http_method=[HttpMethod.GET, HttpMethod.POST])
-async def sign_in(request: Request) -> Any:
-    # get request params
-    query_params = {'client_id': config['client_id'],
-                    'redirect_uri': config['redirect_uri'],
-                    'scope': 'openid email profile',
-                    'state': APP_STATE,
-                    'nonce': NONCE,
-                    'response_type': 'code',
-                    'response_mode': 'query'}
+    @get('/authorization-code/callback')
+    async def callback(self, request: Request) -> Any:
+        headers = {'Content-Type': 'application/x-www-form-urlencoded'}
 
-    # build request_uri
-    encoded_params = (requests.compat.urlencode(query_params))
-    request_uri = "{base_url}?{query_params}".format(
-        base_url=config["auth_uri"],
-        query_params=encoded_params
-    )
-    return Redirect(request_uri)
+        code: str = request.query_params.get('code')
+        app_state = request.query_params.get('state')
 
+        if app_state != APP_STATE:
+            print('The app state does not match')
+            return 'The app state does not match'
 
-# We also have some other routes, for example:
-@HTTPRouteHandler(path="/sign-out", http_method=[HttpMethod.GET, HttpMethod.POST])
-async def sign_out() -> Redirect:
-    logout_user()
-    return Redirect('/')
+        if not code:
+            print('The code was not return or is not accessible')
+            return 'The code was not return or is not accessible'
+        query_params = {'grant_type': 'authorization_code',
+                        'code': code,
+                        'redirect_uri': config.get('redirect_uri')
+                        }
+        query_params = requests.compat.urlencode(query_params)
 
+        exchange = requests.post(
+            config.get('token_uri'),
+            headers=headers,
+            data=query_params,
+            auth=(config.get('client_id'), config.get('client_secret'))
+        ).json()
+        print('exchange')
+        print(exchange)
+        # get token and validate
+        if not exchange.get('token_type'):
+            return 'unsupported token type, should be "Bearer"'
+        access_token = exchange.get('access_token')
+        id_token = exchange.get('id_token')
 
-@get('/authorization-code/callback')
-async def callback(request: Request) -> Any:
-    headers = {'Content-Type': 'application/x-www-form-urlencoded'}
+        # authorization flow successful, get userinfo and sign in user
+        user_response = requests.get(config.get('userinfo_uri'),
+                                     headers={'Authorization': f'Bearer {access_token}'}
+                                     ).json()
+        print('*' * 20)
+        print('user_response')
+        print(user_response)
+        unique_id = user_response.get('sub')
+        user_email = user_response.get('email')
+        user_name = user_response.get('given_name')
 
-    code: str = request.query_params.get('code')
-    app_state = request.query_params.get('state')
+        user = User(
+            id=unique_id,
+            name=user_name,
+            email=user_email)
 
-    if app_state != APP_STATE:
-        print('The app state does not match')
-        return 'The app state does not match'
+        if not USERS_DB.get(unique_id):
+            USERS_DB[unique_id] = user
 
-    if not code:
-        print('The code was not return or is not accessible')
-        return 'The code was not return or is not accessible'
-    query_params = {'grant_type': 'authorization_code',
-                    'code': code,
-                    'redirect_uri': config.get('redirect_uri')
-                    }
-    query_params = requests.compat.urlencode(query_params)
+        login_user(user)
 
-    exchange = requests.post(
-        config.get('token_uri'),
-        headers=headers,
-        data=query_params,
-        auth=(config.get('client_id'), config.get('client_secret'))
-    ).json()
-    print('exchange')
-    print(exchange)
-    # get token and validate
-    if not exchange.get('token_type'):
-        return 'unsupported token type, should be "Bearer"'
-    access_token = exchange.get('access_token')
-    id_token = exchange.get('id_token')
-
-    # authorization flow successful, get userinfo and sign in user
-    user_response = requests.get(config.get('userinfo_uri'),
-                                 headers={'Authorization': f'Bearer {access_token}'}
-                                 ).json()
-    print('*' * 20)
-    print('user_response')
-    print(user_response)
-    unique_id = user_response.get('sub')
-    user_email = user_response.get('email')
-    user_name = user_response.get('given_name')
-
-    user = User(
-        id=unique_id,
-        name=user_name,
-        email=user_email)
-
-    if not USERS_DB.get(unique_id):
-        USERS_DB[unique_id] = user
-
-    login_user(user)
-
-    return Redirect('/profile/' + unique_id)
+        return Redirect('/profile/' + unique_id)
 
 
 # We create our OpenAPIConfig as usual - the JWT security scheme will be injected into it.
@@ -252,7 +248,7 @@ class OpenAPIControllerExtra(OpenAPIController):
 # We initialize the app instance and pass the oauth2_auth 'on_app_init' handler to the constructor.
 # The hook handler will inject the JWT middleware and openapi configuration into the app.
 app = Litestar(
-    route_handlers=[login_handler, read_items, profile, index, sign_in, sign_out, callback],
+    route_handlers=[SSO, read_items],
     # on_app_init=[oauth2_auth.on_app_init],
     openapi_config=OpenAPIConfig(
         title='My API', version='1.0.0',
