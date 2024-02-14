@@ -1,7 +1,8 @@
+from uuid import UUID
+
 import os
 import base64
 import hashlib
-import urllib.parse
 from pathlib import Path
 
 import requests
@@ -11,7 +12,6 @@ from os import environ
 from typing import Any, Optional
 
 from litestar.handlers import HTTPRouteHandler
-from litestar.params import Parameter
 from litestar.response import Redirect
 
 from litestar.contrib.mako import MakoTemplateEngine
@@ -35,12 +35,13 @@ from dotenv import load_dotenv
 load_dotenv()
 session_config = CookieBackendConfig(secret=os.urandom(16))
 
-# Simulate user database
-USERS_DB = {}
+
+
 
 cors_config = CORSConfig(allow_origins=["*"])
 
-APP_STATE = os.getenv('APP_STATE')
+APP_STATE = str(secrets.token_hex(64))
+NONCE = str(secrets.token_hex(64))
 CODE_VERIFIER = os.getenv('CODE_VERIFIER')
 
 
@@ -52,19 +53,21 @@ def write_to_file(lines: str) -> None:
     f.close()
 
 
+# def create_app_state() -> None:
+#     global APP_STATE
+#     APP_STATE = str(secrets.token_hex(64))
+
+
 # Let's assume we have a User model that is a pydantic model.
 # This though is not required - we need some sort of user class -
 # but it can be any arbitrary value, e.g. an SQLAlchemy model, a representation of a MongoDB  etc.
 class User(BaseModel):
     """
-    user class
+    This can be whatever we want, don't have to use these properties
     """
-
-    def __init__(self, id, name, email, /, **data: Any):
-        super().__init__(**data)
-        self.id = id
-        self.name = name
-        self.email = email
+    id: str
+    name: str
+    email: EmailStr
 
     def claims(self):
         """
@@ -73,13 +76,8 @@ class User(BaseModel):
         """
         return {'name': self.name, 'email': self.email}.items()
 
-    @staticmethod
-    def get(user_id: str):
-        return USERS_DB.get(user_id)
 
-    @staticmethod
-    def create(user_id, name, email):
-        USERS_DB[user_id] = User(user_id, name, email)
+USERS_DB: dict[str, User] = {}
 
 
 class Item(BaseModel):
@@ -127,13 +125,11 @@ class MockController(Controller):
 
 
 def logout_user():
-    write_to_file('log out user')
     print('log out user')
 
 
 def login_user(user: User) -> Any:
-    write_to_file('create user')
-    print('create user')
+    print('log in user')
     print(user)
 
 
@@ -146,13 +142,6 @@ def login_user(user: User) -> Any:
 async def retrieve_user_handler(token: "Token", connection: "ASGIConnection[Any, Any, Any, Any]") -> Optional[User]:
     # logic here to retrieve the user instance
     return MOCK_DB.get(token.sub)
-
-
-def dict_to_query_string(val: dict[str, str]) -> str:
-    write_to_file('dict to str\n' + str(val))
-    x = str(val).replace("', '", '&').replace("': '", '=')[2:-2]
-    x = x.replace("': URL('", '=').replace("'), '", '?')
-    return x
 
 
 oauth2_auth = OAuth2PasswordBearerAuth[User](
@@ -168,20 +157,17 @@ oauth2_auth = OAuth2PasswordBearerAuth[User](
 
 @get(path='/profile')
 async def profile(name: Optional[str]) -> Template:
-    write_to_file('profile')
     return Template(template_name='profile.mako.html', context={"name": name})
 
 
 @get(path='/')
 async def index(name: Optional[str]) -> Template:
-    write_to_file('home page')
     return Template(template_name='signin.mako.html', context={"name": name})
 
 
 # Given an instance of 'OAuth2PasswordBearerAuth' we can create a login handler function:
 @post("/login")
 async def login_handler(request: "Request[Any, Any, Any]", data: "User") -> "Response[OAuth2Login]":
-    write_to_file('login')
     MOCK_DB[str(data.id)] = data
     # if we do not define a response body, the login process will return a standard OAuth2 login response.
     # Note the `Response[OAuth2Login]` return type.
@@ -193,47 +179,27 @@ async def login_handler(request: "Request[Any, Any, Any]", data: "User") -> "Res
 
 @HTTPRouteHandler(path="/sign-in", http_method=[HttpMethod.GET, HttpMethod.POST])
 async def sign_in(request: Request) -> Any:
-    # store app state and code verifier in session
-    request.set_session({"app_state": secrets.token_urlsafe(64), "code_verifier": secrets.token_urlsafe(64)})
-    # request.set_session({"app_state": APP_STATE, "code_verifier": CODE_VERIFIER})
-
-    write_to_file('sign in\napp_state: ' + request.session.get('app_state')
-                  + '\ncode_verifier: ' + request.session.get('code_verifier'))
-
-    # calculate code challenge
-    hashed = hashlib.sha256(request.session['code_verifier'].encode('ascii')).digest()
-    encoded = base64.urlsafe_b64encode(hashed)
-    code_challenge = encoded.decode('ascii').strip('=')
-
     # get request params
     query_params = {'client_id': config['client_id'],
-                    'redirect_uri': 'raw_redirect_uri',
+                    'redirect_uri': config['redirect_uri'],
                     'scope': 'openid email profile',
-                    'state': request.session['app_state'],
-                    'code_challenge': code_challenge,
-                    'code_challenge_method': 'S256',
+                    'state': APP_STATE,
+                    'nonce': NONCE,
                     'response_type': 'code',
                     'response_mode': 'query'}
 
     # build request_uri
-    encoded_params = (urllib.parse.quote(dict_to_query_string(query_params))
-                      .replace('raw_redirect_uri', config['redirect_uri']))
-    encoded_params = str(encoded_params).replace('callback%26', 'callback%3F')
-    write_to_file('encoded param ' + encoded_params)
+    encoded_params = (requests.compat.urlencode(query_params))
     request_uri = "{base_url}?{query_params}".format(
         base_url=config["auth_uri"],
         query_params=encoded_params
     )
-    write_to_file('request_url: ' + request_uri)
     return Redirect(request_uri)
-    # print(request.session)
-    # return 'pete'
 
 
 # We also have some other routes, for example:
 @HTTPRouteHandler(path="/sign-out", http_method=[HttpMethod.GET, HttpMethod.POST])
 async def sign_out() -> Redirect:
-    write_to_file('sign-out')
     logout_user()
     return Redirect('/')
 
@@ -247,68 +213,32 @@ async def read_items() -> list[Item]:
 
 
 @get('/authorization-code/callback')
-async def callback(request: Request
-                   # okta_scope: str = Parameter(query='scope', required=False),
-                   # okta_state: str = Parameter(query='state', required=False),
-                   # code_challenge: str = Parameter(query='code_challenge', required=False),
-                   # code_challenge_method: str = Parameter(query='code_challenge_method', required=False),
-                   # code: str = Parameter(query='code', default='200', required=False),
-                   # response_type: str = Parameter(query='response_type', required=False),
-                   # response_mode: str = Parameter(query='response_mode', required=False)
-                   ) -> Any:
-    okta_scope: str = request.query_params.get('scope')
+async def callback(request: Request) -> Any:
     okta_state: str = request.query_params.get('state')
-    code_challenge: str = request.query_params.get('code_challenge')
-    code_challenge_method: str = request.query_params.get('code_challenge_method')
     code: str = request.query_params.get('code')
-    response_type: str = request.query_params.get('response_type')
-    response_mode: str = request.query_params.get('response_mode')
-    write_to_file('callback')
     headers = {'Content-Type': 'application/x-www-form-urlencoded'}
-    # print(str(request.query_params))
     app_state = request.query_params.get('state')
 
-    write_to_file('query_params: ' + str(request.query_params))
-    try:
-        # request.set_session({"app_state": APP_STATE, "code_verifier": CODE_VERIFIER})
-        write_to_file(
-            'session app_state: ' + str(request.session.get('app_state')) + '\nquery app_state : ' + app_state)
-        write_to_file('code: ' + code + '\ncode_verifier: ' + request.session.get('code_verifier'))
-    except Exception as ex:
-        print(ex)
-    write_to_file('base url: ' + str(request.base_url))
-
-    if app_state != request.session.get('app_state'):
-        write_to_file('app state not matched')
+    if app_state != APP_STATE:
         print('The app state does not match')
         return 'The app state does not match'
 
     if not code:
-        write_to_file('code issue')
         print('The code was not return or is not accessible')
         return 'The code was not return or is not accessible'
     query_params = {'grant_type': 'authorization_code',
                     'code': code,
-                    'redirect_uri': request.base_url,
-                    'code_verifier': request.session.get('code_verifier')
+                    'redirect_uri': config.get('redirect_uri')
                     }
-    # query_params = urllib.parse.quote(dict_to_query_string(query_params))
-    write_to_file('query params :' + dict_to_query_string(query_params))
-    write_to_file('client_id : ' + config.get('client_id') + ' secret:' + config.get('client_secret'))
+    query_params = requests.compat.urlencode(query_params)
+
     exchange = requests.post(
         config.get('token_uri'),
         headers=headers,
         data=query_params,
         auth=(config.get('client_id'), config.get('client_secret'))
     ).json()
-    print('query params')
-    print(query_params)
-    print('exchange')
     print(exchange)
-    print('d' * 10)
-    write_to_file('token type: ' + exchange.get('token_type') + '\naccess token :' +
-                  exchange.get('access_token') + '\nid_token: ' + exchange.get('id_token'))
-    write_to_file('exchange: ' + exchange)
     # get token and validate
     if not exchange.get('token_type'):
         return 'unsupported token type, should be "Bearer"'
@@ -316,20 +246,21 @@ async def callback(request: Request
     id_token = exchange.get('id_token')
 
     # authorization flow successful, get userinfo and sign in user
-    write_to_file('userinfo_uri: ' + config.get('userinfo_uri') + '\naccess_token: ' + access_token)
     user_response = requests.get(config.get('userinfo_uri'),
                                  headers={'Authorization': f'Bearer {access_token}'}
                                  ).json()
 
-    write_to_file(str(user_response))
     unique_id = user_response.get('sub')
     user_email = user_response.get('email')
     user_name = user_response.get('given_name')
 
-    user = User(unique_id, user_name, user_email)
+    user = User(
+        id=unique_id,
+        name=user_name,
+        email=user_email)
 
-    if not User.get(unique_id):
-        return 'create user'
+    if not USERS_DB.get(unique_id):
+        USERS_DB[unique_id] = user
 
     login_user(user)
 
