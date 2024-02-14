@@ -79,3 +79,4 @@ fabric.properties
 
 .idea
 /.venv/
+.env
