@@ -30,6 +30,9 @@ from litestar.config.cors import CORSConfig
 
 from datetime import datetime
 
+from dotenv import load_dotenv
+
+load_dotenv()
 session_config = CookieBackendConfig(secret=os.urandom(16))
 
 # Simulate user database
@@ -37,8 +40,8 @@ USERS_DB = {}
 
 cors_config = CORSConfig(allow_origins=["*"])
 
-APP_STATE = ''
-CODE_VERIFIER = ''
+APP_STATE = os.getenv('APP_STATE')
+CODE_VERIFIER = os.getenv('CODE_VERIFIER')
 
 
 def write_to_file(lines: str) -> None:
@@ -86,9 +89,9 @@ class Item(BaseModel):
 
 MOCK_DB: dict[str, User] = {}
 
-your_okta_domain = 'dev-73804109.okta.com'
-client_id = ''
-client_secret = ''
+your_okta_domain = os.getenv('your_okta_domain')
+client_id = os.getenv('client_id')
+client_secret = os.getenv('client_secret')
 redirect_uri = 'http://localhost:8000/authorization-code/callback'
 
 config: dict[str, str] = {
