@@ -86,8 +86,6 @@ async def read_items() -> list[Item]:
     return items
 
 
-MOCK_DB: dict[str, User] = {}
-
 your_okta_domain = os.getenv('your_okta_domain')
 client_id = os.getenv('client_id')
 client_secret = os.getenv('client_secret')
@@ -122,7 +120,7 @@ def login_user(user: User) -> Any:
 # - The callable can be either sync or async - both will work.
 async def retrieve_user_handler(token: "Token", connection: "ASGIConnection[Any, Any, Any, Any]") -> Optional[User]:
     # logic here to retrieve the user instance
-    return MOCK_DB.get(token.sub)
+    return USERS_DB.get(token.sub)
 
 
 oauth2_auth = OAuth2PasswordBearerAuth[User](
@@ -132,7 +130,17 @@ oauth2_auth = OAuth2PasswordBearerAuth[User](
     token_url="/login",
     # we are specifying which endpoints should be excluded from authentication. In this case the login endpoint
     # and our openAPI docs.
-    exclude=["/login", "/schema"],
+    exclude=[
+        "/login",
+        "/docs",
+        "/healthz",
+        "^/$",
+        "/metrics",
+        "/static-files",
+        "/sign-in",
+        "/sign-out",
+        "/authorization-code/callback"
+    ],
 )
 
 
@@ -149,7 +157,7 @@ class SSO(Controller):
     # Given an instance of 'OAuth2PasswordBearerAuth' we can create a login handler function:
     @post("/login")
     async def login_handler(self, request: "Request[Any, Any, Any]", data: "User") -> "Response[OAuth2Login]":
-        MOCK_DB[str(data.id)] = data
+        USERS_DB[str(data.id)] = data
         # if we do not define a response body, the login process will return a standard OAuth2 login response.
         # Note the `Response[OAuth2Login]` return type.
 
@@ -237,7 +245,9 @@ class SSO(Controller):
 
         login_user(user)
 
-        return Redirect('/profile/' + unique_id)
+        return oauth2_auth.login(identifier=str(user.id))
+
+        # return Redirect('/profile/' + unique_id)
 
 
 # We create our OpenAPIConfig as usual - the JWT security scheme will be injected into it.
@@ -249,7 +259,7 @@ class OpenAPIControllerExtra(OpenAPIController):
 # The hook handler will inject the JWT middleware and openapi configuration into the app.
 app = Litestar(
     route_handlers=[SSO, read_items],
-    # on_app_init=[oauth2_auth.on_app_init],
+    on_app_init=[oauth2_auth.on_app_init],
     openapi_config=OpenAPIConfig(
         title='My API', version='1.0.0',
         root_schema_site='elements',  # swagger, elements, redoc, rapidoc
@@ -266,6 +276,6 @@ app = Litestar(
         directory=Path('templates'),
         engine=MakoTemplateEngine,
     ),
-    middleware=[session_config.middleware],
+    # middleware=[session_config.middleware],
     cors_config=cors_config
 )
