@@ -12,7 +12,6 @@ from typing import Any, Optional
 
 from litestar import Litestar, Request, Response, get, post, Controller, HttpMethod
 from litestar.handlers import HTTPRouteHandler
-from litestar.config.cors import CORSConfig
 from litestar.connection import ASGIConnection
 from litestar.contrib.mako import MakoTemplateEngine
 from litestar.middleware.session.client_side import CookieBackendConfig
@@ -22,20 +21,13 @@ from litestar.template import TemplateConfig
 from litestar.openapi import OpenAPIController
 from litestar.openapi.config import OpenAPIConfig
 from litestar.security.jwt import OAuth2Login, OAuth2PasswordBearerAuth, Token
-
 from litestar.status_codes import HTTP_302_FOUND
-
 
 from pydantic import BaseModel, EmailStr
 
 load_dotenv()
+
 session_config = CookieBackendConfig(secret=os.urandom(16))
-
-cors_config = CORSConfig(allow_origins=["*"])
-
-APP_STATE = str(secrets.token_hex(64))
-NONCE = str(secrets.token_hex(64))
-
 
 def write_to_file(lines: str) -> None:
     """
@@ -87,32 +79,6 @@ async def read_items() -> list[Item]:
     return items
 
 
-your_okta_domain = os.getenv('your_okta_domain')
-client_id = os.getenv('client_id')
-client_secret = os.getenv('client_secret')
-redirect_uri = os.getenv('redirect_uri')
-
-config: dict[str, str] = {
-    'SECRET_KEY': secrets.token_hex(64),
-    'auth_uri': 'https://' + your_okta_domain + '/oauth2/default/v1/authorize',
-    'client_id': client_id,
-    'client_secret': client_secret,
-    'redirect_uri': redirect_uri,
-    'issuer': 'https://' + your_okta_domain + '/oauth2/default',
-    'token_uri': 'https://' + your_okta_domain + '/oauth2/default/v1/token',
-    'userinfo_uri': 'https://' + your_okta_domain + '/oauth2/default/v1/userinfo'
-}
-
-
-def logout_user():
-    print('log out user')
-
-
-def login_user(user: User) -> Any:
-    print('log in user')
-    print(user)
-
-
 # OAuth2PasswordBearerAuth requires a retrieve handler callable that receives the JWT token model and
 # the ASGI connection and returns the 'User' instance correlating to it.
 #
@@ -140,20 +106,44 @@ oauth2_auth = OAuth2PasswordBearerAuth[User](
         "/static-files",
         "/sign-in",
         "/sign-out",
-        "/authorization-code/callback"
+        "/authorization-code/callback",
+        "/profile"
     ],
 )
 
 
 class SSO(Controller):
-    @get(path='/profile/{user_id:str}')
-    async def profile(self, user_id: str) -> Template:
-        print(USERS_DB[user_id])
-        return Template(template_name='profile.mako.html', context={"user": USERS_DB[user_id]})
+    APP_STATE = str(secrets.token_hex(64))
+    NONCE = str(secrets.token_hex(64))
+
+    OKTA_DOMAIN = os.getenv('OKTA_DOMAIN')
+    CLIENT_ID = os.getenv('CLIENT_ID')
+    CLIENT_SECRET = os.getenv('CLIENT_SECRET')
+    REDIRECT_URL = os.getenv('REDIRECT_URL')
+
+    config: dict[str, str] = {
+        'SECRET_KEY': secrets.token_hex(64),
+        'auth_uri': 'https://' + OKTA_DOMAIN + '/oauth2/default/v1/authorize',
+        'client_id': CLIENT_ID,
+        'client_secret': CLIENT_SECRET,
+        'redirect_uri': REDIRECT_URL,
+        'issuer': 'https://' + OKTA_DOMAIN + '/oauth2/default',
+        'token_uri': 'https://' + OKTA_DOMAIN + '/oauth2/default/v1/token',
+        'userinfo_uri': 'https://' + OKTA_DOMAIN + '/oauth2/default/v1/userinfo'
+    }
+
+    @get(path='/profile/')
+    async def profile(self, request: Request) -> Template:
+        user_id = request.session.get('user', 'unknown').get('id', None)
+        return Template(template_name='profile.mako.html', context={"user": USERS_DB.get(user_id, None)})
 
     @get(path='/')
-    async def index(self, name: Optional[str]) -> Template:
-        return Template(template_name='signin.mako.html', context={"name": name})
+    async def index(self, request: Request, name: Optional[str]) -> Template:
+        return Template(template_name='signin.mako.html',
+                        context={
+                            "action": request.query_params.get('sign-out', None),
+                            "user": request.session.get('user', None)
+                        })
 
     # Given an instance of 'OAuth2PasswordBearerAuth' we can create a login handler function:
     @post("/login")
@@ -169,27 +159,31 @@ class SSO(Controller):
     @HTTPRouteHandler(path="/sign-in", http_method=[HttpMethod.GET, HttpMethod.POST], status_code=HTTP_302_FOUND)
     async def sign_in(self, request: Request) -> Redirect:
         # get request params
-        query_params = {'client_id': config['client_id'],
-                        'redirect_uri': config['redirect_uri'],
+        query_params = {'client_id': self.config['client_id'],
+                        'redirect_uri': self.config['redirect_uri'],
                         'scope': 'openid email profile',
-                        'state': APP_STATE,
-                        'nonce': NONCE,
+                        'state': self.APP_STATE,
+                        'nonce': self.NONCE,
+                        'prompt': 'login',
                         'response_type': 'code',
                         'response_mode': 'query'}
 
         # build request_uri
         encoded_params = (requests.compat.urlencode(query_params))
         request_uri = "{base_url}?{query_params}".format(
-            base_url=config["auth_uri"],
+            base_url=self.config["auth_uri"],
             query_params=encoded_params
         )
         return Redirect(request_uri)
 
     # We also have some other routes, for example:
     @HTTPRouteHandler(path="/sign-out", http_method=[HttpMethod.GET, HttpMethod.POST], status_code=HTTP_302_FOUND)
-    async def sign_out(self) -> Redirect:
-        logout_user()
-        return Redirect('/')
+    async def sign_out(self, request: Request) -> Redirect:
+        user = request.session.get('user', None)
+        if user:
+            USERS_DB.pop(user.get('id'), None)
+            request.session.pop('user', None)
+        return Redirect('/?sign-out=t')
 
     @get('/authorization-code/callback')
     async def callback(self, request: Request) -> str | Response[Any]:
@@ -198,7 +192,7 @@ class SSO(Controller):
         code: str = request.query_params.get('code')
         app_state = request.query_params.get('state')
 
-        if app_state != APP_STATE:
+        if app_state != self.APP_STATE:
             print('The app state does not match')
             return 'The app state does not match'
 
@@ -207,15 +201,15 @@ class SSO(Controller):
             return 'The code was not return or is not accessible'
         query_params = {'grant_type': 'authorization_code',
                         'code': code,
-                        'redirect_uri': config.get('redirect_uri')
+                        'redirect_uri': self.config.get('redirect_uri')
                         }
         query_params = requests.compat.urlencode(query_params)
 
         exchange = requests.post(
-            config.get('token_uri'),
+            self.config.get('token_uri'),
             headers=headers,
             data=query_params,
-            auth=(config.get('client_id'), config.get('client_secret'))
+            auth=(self.config.get('client_id'), self.config.get('client_secret'))
         ).json()
         print('exchange')
         print(exchange)
@@ -226,7 +220,7 @@ class SSO(Controller):
         id_token = exchange.get('id_token')
 
         # authorization flow successful, get userinfo and sign in user
-        user_response = requests.get(config.get('userinfo_uri'),
+        user_response = requests.get(self.config.get('userinfo_uri'),
                                      headers={'Authorization': f'Bearer {access_token}'}
                                      ).json()
         print('*' * 20)
@@ -244,11 +238,15 @@ class SSO(Controller):
         if not USERS_DB.get(unique_id):
             USERS_DB[unique_id] = user
 
-        login_user(user)
+        request.set_session({"user": user})
 
-        return oauth2_auth.login(identifier=str(user.id))
+        auth_user = oauth2_auth.login(identifier=str(user.id))
+        print('use the following token to access endpoints')
+        print(auth_user.content)
 
-        # return Redirect('/profile/' + unique_id)
+        # return auth_user
+        #
+        return Redirect('/profile')
 
 
 # We create our OpenAPIConfig as usual - the JWT security scheme will be injected into it.
@@ -277,6 +275,5 @@ app = Litestar(
         directory=Path('templates'),
         engine=MakoTemplateEngine,
     ),
-    # middleware=[session_config.middleware],
-    cors_config=cors_config
+    middleware=[session_config.middleware]
 )

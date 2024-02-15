@@ -1,5 +1,5 @@
 Need values in .env for
-client_id=
-client_secret=
-your_okta_domain=
-redirect_uri=http://localhost:8000/authorization-code/callback
+CLIENT_ID=
+CLIENT_SECRET=
+OKTA_DOMAIN=
+REDIRECT_URL=http://localhost:8000/authorization-code/callback

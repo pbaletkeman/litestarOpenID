@@ -13,11 +13,18 @@
 <%block name="intro">
     intro
 </%block>
+<h4>action</h4>
+${action}
 
-<form action="/sign-out" method="post">
-    <button>Sign Out</button>
-</form>
+% if user:
+    <h3>${user}</h3>
+    <form action="/sign-out" method="post">
+        <button>Sign Out</button>
+    </form>
+% else:
+    <form action="/sign-in" method="get">
+        <button>Sign In</button>
+    </form>
+% endif
 
-<form action="/sign-in" method="get">
-    <button>Sign In</button>
-</form>
+
