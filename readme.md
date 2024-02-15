@@ -1,10 +1,18 @@
+# About #
+
+Sample website programmed in Python using the [Litestar](https://litestar.dev) framework secured with OKTA as as the OpenID/OIDC provider.
+
+#### Requires: ####
+- Python 3.11.x
+- OKTA OIDC/OpenID (may work with not OKTA providers) 
+
 ### Run command ###
 `litestar --app main:app run --debug`
 
 ### .env file expectations ### 
 - CLIENT_ID=*&lt;Value From OKTA&gt;*
 - CLIENT_SECRET=*&lt;Value From OKTA&gt;*
-- OKTA_DOMAIN=dev-73804109.okta.com
+- OKTA_DOMAIN=*&lt;dev-73804109.okta.com&gt;*
 - REDIRECT_URL=*&lt;Setup in OKTA and refers to this site/project&gt;*<br/>
 **e.g. http://localhost:8000/authorization-code/callback**<br/><br/>
 - ***OKTA_PROMPT***=
