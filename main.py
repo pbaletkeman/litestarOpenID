@@ -134,7 +134,11 @@ class SSO(Controller):
 
     @get(path='/profile/')
     async def profile(self, request: Request) -> Template:
-        user_id = request.session.get('user', 'unknown').get('id', None)
+        user_id = ''
+        try:
+            user_id = request.session.get('user', None).get('id', None)
+        except AttributeError as ex:
+            print(ex)
         return Template(template_name='profile.mako.html', context={"user": USERS_DB.get(user_id, None)})
 
     @get(path='/')

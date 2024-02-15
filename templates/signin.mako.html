@@ -1,22 +1,25 @@
 <%inherit file="base.mako.html"/>
 
 <%block name="title">
-    this is the title
+    My Website
 </%block>
 
 <%block name="header">
-    this is some header content
+    <h4>This is some header content</h4>
     ${parent.header()}
 </%block>
 
 
 <%block name="intro">
-    intro
+    <h5>I am an introduction to the site</h5>
 </%block>
-<h4>action</h4>
-${action}
+
+% if action:
+    <h3>Successfully signed out</h3>
+% endif
 
 % if user:
+    Current User Record
     <h3>${user}</h3>
     <form action="/sign-out" method="post">
         <button>Sign Out</button>

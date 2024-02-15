@@ -1,22 +1,33 @@
 <%inherit file="base.mako.html"/>
 
 <%block name="title">
-    this is the title
+    Profile Page
 </%block>
 
 <%block name="header">
-    this is some header content
+    Let's talk about you
     ${parent.header()}
 </%block>
 
 
 <%block name="intro">
-    intro
+    This is all about you
 </%block>
 
 <div>
-    <h2>My Profile</h2>
-    ${user}
-
-    <p>Hello, <span>user.name</span>.</p>
+    %if user:
+        <h2>My Profile</h2>
+        <h3>User Details</h3>
+        ${user}
+        <br/>
+        <br/>
+        <br/>
+    % else:
+        <h3>No user logged in</h3>
+        <br/>
+        <a href="/">Log in</a>
+        <br/>
+        <br/>
+        <br/>
+    % endif
 </div>
