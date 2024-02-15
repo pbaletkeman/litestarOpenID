@@ -3,11 +3,8 @@ from dotenv import load_dotenv
 
 import os
 from pathlib import Path
-
 import requests
 import secrets
-
-from os import environ
 from typing import Any, Optional
 
 from litestar import Litestar, Request, Response, get, post, Controller, HttpMethod
@@ -28,6 +25,7 @@ from pydantic import BaseModel, EmailStr
 load_dotenv()
 
 session_config = CookieBackendConfig(secret=os.urandom(16))
+
 
 def write_to_file(lines: str) -> None:
     """
@@ -54,6 +52,7 @@ class User(BaseModel):
     id: str
     name: str
     email: EmailStr
+    token: dict[str, Any]
 
     def claims(self):
         """
@@ -92,11 +91,11 @@ async def retrieve_user_handler(token: "Token", connection: "ASGIConnection[Any,
 
 oauth2_auth = OAuth2PasswordBearerAuth[User](
     retrieve_user_handler=retrieve_user_handler,
-    token_secret=environ.get("JWT_SECRET", "abcd123"),
+    token_secret=os.getenv("JWT_SECRET", os.urandom(16)),
     # we are specifying the URL for retrieving a JWT access token
     token_url="/login",
-    # we are specifying which endpoints should be excluded from authentication. In this case the login endpoint
-    # and our openAPI docs.
+    # we are specifying which endpoints should be excluded from authentication.
+    # note that this is a list regex patterns
     exclude=[
         "/login",
         "/docs",
@@ -120,6 +119,7 @@ class SSO(Controller):
     CLIENT_ID = os.getenv('CLIENT_ID')
     CLIENT_SECRET = os.getenv('CLIENT_SECRET')
     REDIRECT_URL = os.getenv('REDIRECT_URL')
+    PROMPT = os.getenv('OKTA_PROMPT', None)
 
     config: dict[str, str] = {
         'SECRET_KEY': secrets.token_hex(64),
@@ -136,13 +136,15 @@ class SSO(Controller):
     async def profile(self, request: Request) -> Template:
         user_id = ''
         try:
-            user_id = request.session.get('user', None).get('id', None)
+            user_id = request.session.get('user', None)
+            if user_id:
+                user_id = user_id.get('id', None)
         except AttributeError as ex:
             print(ex)
         return Template(template_name='profile.mako.html', context={"user": USERS_DB.get(user_id, None)})
 
     @get(path='/')
-    async def index(self, request: Request, name: Optional[str]) -> Template:
+    async def index(self, request: Request) -> Template:
         return Template(template_name='signin.mako.html',
                         context={
                             "action": request.query_params.get('sign-out', None),
@@ -151,7 +153,8 @@ class SSO(Controller):
 
     # Given an instance of 'OAuth2PasswordBearerAuth' we can create a login handler function:
     @post("/login")
-    async def login_handler(self, request: "Request[Any, Any, Any]", data: "User") -> "Response[OAuth2Login]":
+    async def login_handler(self,  data: "User") -> "Response[OAuth2Login]":
+        # async def sign_in(self, request: Request) -> Redirect:
         USERS_DB[str(data.id)] = data
         # if we do not define a response body, the login process will return a standard OAuth2 login response.
         # Note the `Response[OAuth2Login]` return type.
@@ -161,16 +164,26 @@ class SSO(Controller):
         return oauth2_auth.login(identifier=str(data.id))
 
     @HTTPRouteHandler(path="/sign-in", http_method=[HttpMethod.GET, HttpMethod.POST], status_code=HTTP_302_FOUND)
-    async def sign_in(self, request: Request) -> Redirect:
+    async def sign_in(self) -> Redirect:
+        # async def sign_in(self, request: Request) -> Redirect:
         # get request params
         query_params = {'client_id': self.config['client_id'],
                         'redirect_uri': self.config['redirect_uri'],
                         'scope': 'openid email profile',
                         'state': self.APP_STATE,
                         'nonce': self.NONCE,
-                        'prompt': 'login',
                         'response_type': 'code',
                         'response_mode': 'query'}
+
+        if self.PROMPT:
+            query_params = {'client_id': self.config['client_id'],
+                            'redirect_uri': self.config['redirect_uri'],
+                            'scope': 'openid email profile',
+                            'state': self.APP_STATE,
+                            'nonce': self.NONCE,
+                            'prompt': self.PROMPT,
+                            'response_type': 'code',
+                            'response_mode': 'query'}
 
         # build request_uri
         encoded_params = (requests.compat.urlencode(query_params))
@@ -215,8 +228,8 @@ class SSO(Controller):
             data=query_params,
             auth=(self.config.get('client_id'), self.config.get('client_secret'))
         ).json()
-        print('exchange')
-        print(exchange)
+        # print('exchange')
+        # print(exchange)
         # get token and validate
         if not exchange.get('token_type'):
             return 'unsupported token type, should be "Bearer"'
@@ -227,29 +240,29 @@ class SSO(Controller):
         user_response = requests.get(self.config.get('userinfo_uri'),
                                      headers={'Authorization': f'Bearer {access_token}'}
                                      ).json()
-        print('*' * 20)
-        print('user_response')
-        print(user_response)
+        # print('*' * 20)
+        # print('user_response')
+        # print(user_response)
         unique_id = user_response.get('sub')
         user_email = user_response.get('email')
         user_name = user_response.get('given_name')
 
+        auth_user = oauth2_auth.login(identifier=str(unique_id))
+
         user = User(
             id=unique_id,
             name=user_name,
-            email=user_email)
+            email=user_email,
+            token=auth_user.content
+        )
 
         if not USERS_DB.get(unique_id):
             USERS_DB[unique_id] = user
 
         request.set_session({"user": user})
+        # print('use the following token to access endpoints')
+        # print(auth_user.content)
 
-        auth_user = oauth2_auth.login(identifier=str(user.id))
-        print('use the following token to access endpoints')
-        print(auth_user.content)
-
-        # return auth_user
-        #
         return Redirect('/profile')
 
 
