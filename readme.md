@@ -2,6 +2,8 @@
 
 Sample website programmed in Python using the [Litestar](https://litestar.dev) framework secured with OKTA as as the OpenID/OIDC provider.
 
+See https://dev.to/pbaletkeman/secure-python-litestar-site-with-openidoidc-using-okta-hosted-login-38nf for a write up about this project.
+
 #### Requires: ####
 - Python 3.11.x
 - OKTA OIDC/OpenID (may work with not OKTA providers) 
